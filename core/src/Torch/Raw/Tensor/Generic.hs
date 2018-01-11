@@ -4,6 +4,7 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE FlexibleContexts #-}
 module Torch.Raw.Tensor.Generic
   ( flatten
@@ -26,14 +27,21 @@ module Torch.Raw.Tensor.Generic
 
   , dispRaw
 
+  -- for testing for now
+  , flatten'
+  , storageGet
+
   , module X
   ) where
 
 import Numeric.Dimensions (Dim(..), someDimsVal)
-import Foreign (Ptr)
+import Foreign (Ptr, ForeignPtr, Storable, withForeignPtr, peek)
 import Foreign.C.Types
+import Foreign.Marshal.Array (peekArray, advancePtr)
 import Data.Maybe (fromJust)
+import System.IO.Unsafe (unsafePerformIO)
 import qualified Numeric as Num (showGFloat)
+import Data.List (concat)
 
 import Torch.Core.Internal (impossible)
 import Torch.Core.Tensor.Dim
@@ -43,12 +51,13 @@ import Torch.Raw.Tensor as X
 import Torch.Raw.Tensor.Math as X
 import Torch.Raw.Tensor.Lapack as X
 import Torch.Raw.Tensor.Random as X
+import Torch.Raw.Storage (c_get)
 
 import THTypes
 
 -- | flatten a CTHDoubleTensor into a list
-flatten :: THTensor t => Ptr t -> [HaskReal t]
-flatten tensor =
+flatten' :: THTensor t => Ptr t -> [HaskReal t]
+flatten' tensor =
   case map getDim [0 .. c_nDimension tensor - 1] of
     []           -> mempty
     [x]          -> c_get1d tensor <$> range x
@@ -62,6 +71,34 @@ flatten tensor =
 
     range :: Integral i => Int -> [i]
     range mx = [0 .. fromIntegral mx - 1]
+
+-- Get element from storage. No bounds checking.
+-- storageGet :: (THTensor t, Storable (HaskReal t)) => Ptr t -> Int -> HaskReal t
+--storageGet tensor idx =
+--    unsafePerformIO $ do
+--      dataPtr <- c_tensordata tensor
+--      peek (advancePtr dataPtr idx)
+storageGet s idx =
+    c_get s $ fromIntegral idx
+
+-- Flattens an n-dim tensor
+-- flatten' :: (THTensor t, Storable (HaskReal t)) => Ptr t -> [HaskReal t]
+flatten tensor =
+    go storageOffset size stride
+  where
+    sPtr = unsafePerformIO $ c_storage tensor
+    go offset mySize myStride =
+      case mySize of
+       [] -> []
+       [sz] -> [storageGet sPtr (offset+i) | i <- [0..sz - 1]]
+       (sz:szTail) ->
+         let (st:stTail) = myStride in
+         concat $ (map (\i -> let !newOffset = offset+i*st in
+                              go newOffset szTail stTail) [0..sz - 1])
+    dim = c_nDimension tensor
+    size = map (fromIntegral . c_size tensor) [0..dim - 1]
+    stride = map (fromIntegral . c_stride tensor) [0..dim - 1]
+    storageOffset = fromIntegral (c_storageOffset tensor)
 
 -- |randomly initialize a tensor with uniform random values from a range
 -- TODO - finish implementation to handle sizes correctly

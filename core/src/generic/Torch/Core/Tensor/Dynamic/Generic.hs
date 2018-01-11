@@ -66,7 +66,7 @@ genericWrapRaw tensor = construct <$> newForeignPtr Gen.p_free tensor
 genericP :: (THTensor' t, Show (HaskReal' t)) => t -> IO ()
 genericP t = withForeignPtr (getForeign t) Gen.dispRaw
 
-genericToList :: THTensor' t => (HaskReal' t -> Item t) -> t -> [Item t]
+--genericToList :: THTensor' t => (HaskReal' t -> Item t) -> t -> [Item t]
 genericToList translate t = unsafePerformIO $ withForeignPtr (getForeign t) (pure . map translate . Gen.flatten)
 {-# NOINLINE genericToList #-}
 
